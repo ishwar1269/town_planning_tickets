@@ -11,6 +11,16 @@ echo.
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
+:: Clean any previous/stale process on port 5000
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+:: Clean any previous/stale process on port 3000
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000" ^| findstr "LISTENING"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
 :: Detect Local IPv4 Network Address
 set "LOCAL_IP=127.0.0.1"
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4"') do (
@@ -33,7 +43,7 @@ if %ERRORLEVEL% neq 0 (
 if not exist "%ROOT_DIR%backend\node_modules" (
     echo [1/4] Installing backend dependencies...
     cd /d "%ROOT_DIR%backend"
-    call npm install
+    call npm.cmd install
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Failed to install backend dependencies.
         pause
@@ -49,7 +59,7 @@ if not exist "%ROOT_DIR%backend\node_modules" (
 if not exist "%ROOT_DIR%frontend\node_modules" (
     echo [2/4] Installing frontend dependencies...
     cd /d "%ROOT_DIR%frontend"
-    call npm install
+    call npm.cmd install
     if %ERRORLEVEL% neq 0 (
         echo [ERROR] Failed to install frontend dependencies.
         pause
@@ -65,12 +75,12 @@ if not exist "%ROOT_DIR%frontend\node_modules" (
 echo [3/4] Starting Backend server (Port 5000)...
 start "Town Planning - Backend Server (Port 5000)" cmd /k "cd /d "%ROOT_DIR%backend" && node server.js"
 
-:: Start Frontend dev server with host enabled in separate window
+:: Start Frontend dev server with host enabled on port 3000
 echo [4/4] Starting Frontend client (Port 3000)...
-start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev -- --host"
+start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" && call npm.cmd run dev -- --host 0.0.0.0 --port 3000"
 
-:: Wait 3 seconds then open browser
-timeout /t 3 /nobreak >nul
+:: Wait 4 seconds then open browser
+timeout /t 4 /nobreak >nul
 echo.
 echo Launching web browser at http://localhost:3000 ...
 start http://localhost:3000

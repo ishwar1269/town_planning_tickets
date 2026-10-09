@@ -1396,84 +1396,224 @@ app.get('/api/activity-notifications', (req, res) => {
   }
 });
 
-// 8. GET /api/reports/export - Filtered CSV Export Data
+// 8. GET /api/reports/export - Filtered CSV Export Data (Supports 7 Specialized Report Types)
 app.get('/api/reports/export', (req, res) => {
   try {
-    const { startDate, endDate, category_id, status, priority, technician_id, user_email, user_role } = req.query;
+    const { reportType = 'summary', startDate, endDate, category_id, status, priority, technician_id, sla_status, user_email, user_role, custom_cols } = req.query;
 
-    let query = `
-      SELECT 
-        t.ticket_number as "Ticket No",
-        t.title as "Title",
-        c.name as "Category",
-        t.priority as "Priority",
-        t.status as "Status",
-        t.created_by_name as "Created By",
-        t.created_by_email as "Creator Email",
-        COALESCE(tech.name, 'Unassigned') as "Assigned Technician",
-        COALESCE(tech.email, '-') as "Technician Email",
-        t.created_at as "Created Date",
-        t.assigned_at as "Assigned Date",
-        t.closed_at as "Closed Date"
-      FROM tickets t
-      LEFT JOIN categories c ON t.category_id = c.id
-      LEFT JOIN technicians tech ON t.assigned_technician_id = tech.id
-      WHERE 1=1
-    `;
-
+    let baseFilter = ' WHERE 1=1';
     const params = [];
 
     if (user_role === 'user' && user_email) {
-      query += ` AND (LOWER(t.created_by_email) = LOWER(?) OR LOWER(t.created_by_name) IN (SELECT LOWER(name) FROM users WHERE LOWER(email) = LOWER(?)))`;
+      baseFilter += ` AND (LOWER(t.created_by_email) = LOWER(?) OR LOWER(t.created_by_name) IN (SELECT LOWER(name) FROM users WHERE LOWER(email) = LOWER(?)))`;
       params.push(user_email, user_email);
     } else if (user_role === 'technician' && user_email) {
-      query += ` AND (LOWER(t.created_by_email) = LOWER(?) OR t.assigned_technician_id = (SELECT id FROM technicians WHERE LOWER(email) = LOWER(?)))`;
+      baseFilter += ` AND (LOWER(t.created_by_email) = LOWER(?) OR t.assigned_technician_id = (SELECT id FROM technicians WHERE LOWER(email) = LOWER(?)))`;
       params.push(user_email, user_email);
     }
 
     if (startDate) {
-      query += ` AND t.created_at >= ?`;
+      baseFilter += ` AND t.created_at >= ?`;
       params.push(`${startDate}T00:00:00.000Z`);
     }
     if (endDate) {
-      query += ` AND t.created_at <= ?`;
+      baseFilter += ` AND t.created_at <= ?`;
       params.push(`${endDate}T23:59:59.999Z`);
     }
     if (category_id && category_id !== 'all') {
-      query += ` AND t.category_id = ?`;
+      baseFilter += ` AND t.category_id = ?`;
       params.push(Number(category_id));
     }
     if (status && status !== 'all') {
-      query += ` AND t.status = ?`;
+      baseFilter += ` AND t.status = ?`;
       params.push(status);
     }
     if (priority && priority !== 'all') {
-      query += ` AND t.priority = ?`;
+      baseFilter += ` AND t.priority = ?`;
       params.push(priority);
     }
     if (technician_id && technician_id !== 'all') {
-      query += ` AND t.assigned_technician_id = ?`;
+      baseFilter += ` AND t.assigned_technician_id = ?`;
       params.push(Number(technician_id));
     }
 
-    query += ` ORDER BY t.id DESC`;
+    let csvContent = '';
+    let filename = `Town_Planning_${reportType}_${Date.now()}.csv`;
 
-    const tickets = db.prepare(query).all(...params);
+    if (reportType === 'tickets_per_day') {
+      // Daily Intake and Resolution Breakdown Report
+      const query = `
+        SELECT 
+          SUBSTR(t.created_at, 1, 10) as "Date",
+          COUNT(t.id) as "Total Raised",
+          SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) as "Total Resolved",
+          SUM(CASE WHEN t.status != 'Closed' THEN 1 ELSE 0 END) as "Net Pending",
+          SUM(CASE WHEN t.priority = 'Critical' THEN 1 ELSE 0 END) as "Critical Issues",
+          SUM(CASE WHEN t.priority = 'High' THEN 1 ELSE 0 END) as "High Priority"
+        FROM tickets t
+        ${baseFilter}
+        GROUP BY SUBSTR(t.created_at, 1, 10)
+        ORDER BY "Date" DESC
+      `;
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) return res.status(404).send('No data found for Daily Tickets report.');
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(r => Object.values(r).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `Daily_Ticket_Volume_Report_${Date.now()}.csv`;
 
-    if (tickets.length === 0) {
-      return res.status(404).send('No tickets match the selected date range and filter criteria.');
+    } else if (reportType === 'technician_stats') {
+      // Specialist Performance and Caseload Report
+      const query = `
+        SELECT 
+          tech.name as "Technician Name",
+          tech.email as "Email",
+          tech.designation as "Designation",
+          tech.contact_number as "Phone",
+          COUNT(t.id) as "Total Assigned",
+          SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) as "Resolved Cases",
+          SUM(CASE WHEN t.status != 'Closed' AND t.id IS NOT NULL THEN 1 ELSE 0 END) as "Pending Cases",
+          CASE WHEN COUNT(t.id) > 0 
+            THEN ROUND((CAST(SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(t.id)) * 100, 1) || '%'
+            ELSE '0%' END as "Resolution Rate"
+        FROM technicians tech
+        LEFT JOIN tickets t ON t.assigned_technician_id = tech.id ${startDate || endDate || priority || category_id ? baseFilter.replace(' WHERE 1=1 AND', ' AND') : ''}
+        GROUP BY tech.id
+        ORDER BY "Total Assigned" DESC
+      `;
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) return res.status(404).send('No data found for Technician Performance report.');
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(r => Object.values(r).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `Technician_Performance_Report_${Date.now()}.csv`;
+
+    } else if (reportType === 'response_speed') {
+      // SLA Response and Compliance Audit Report
+      const query = `
+        SELECT 
+          t.ticket_number as "Ticket No",
+          t.title as "Subject",
+          c.name as "Category",
+          t.priority as "Priority",
+          t.status as "Status",
+          COALESCE(tech.name, 'Unassigned') as "Assigned Agent",
+          t.created_at as "Created At",
+          t.due_at as "SLA Due At",
+          CASE 
+            WHEN t.status = 'Closed' AND t.closed_at <= t.due_at THEN 'Within SLA (Met)'
+            WHEN t.status = 'Closed' AND t.closed_at > t.due_at THEN 'Breached SLA (Delayed Resolution)'
+            WHEN t.status != 'Closed' AND datetime('now') > datetime(t.due_at) THEN 'Breached (Overdue)'
+            ELSE 'In SLA Target'
+          END as "SLA Compliance Status",
+          t.closed_at as "Resolved At"
+        FROM tickets t
+        LEFT JOIN categories c ON t.category_id = c.id
+        LEFT JOIN technicians tech ON t.assigned_technician_id = tech.id
+        ${baseFilter}
+        ORDER BY t.id DESC
+      `;
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) return res.status(404).send('No data found for SLA Compliance report.');
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(r => Object.values(r).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `SLA_Response_Compliance_Report_${Date.now()}.csv`;
+
+    } else if (reportType === 'companies_stats') {
+      // Department and Category Breakdown Report
+      const query = `
+        SELECT 
+          c.name as "Department Category",
+          COUNT(t.id) as "Total Grievances",
+          SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) as "Resolved",
+          SUM(CASE WHEN t.status != 'Closed' AND t.id IS NOT NULL THEN 1 ELSE 0 END) as "Active / Pending",
+          SUM(CASE WHEN t.priority = 'Critical' THEN 1 ELSE 0 END) as "Critical Issues",
+          CASE WHEN COUNT(t.id) > 0 
+            THEN ROUND((CAST(SUM(CASE WHEN t.status = 'Closed' THEN 1 ELSE 0 END) AS FLOAT) / COUNT(t.id)) * 100, 1) || '%'
+            ELSE '0%' END as "Clearance Rate"
+        FROM categories c
+        LEFT JOIN tickets t ON t.category_id = c.id ${startDate || endDate || priority || status ? baseFilter.replace(' WHERE 1=1 AND', ' AND') : ''}
+        GROUP BY c.id
+        ORDER BY "Total Grievances" DESC
+      `;
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) return res.status(404).send('No data found for Department Categories report.');
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(r => Object.values(r).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `Department_Category_Breakdown_${Date.now()}.csv`;
+
+    } else if (reportType === 'due_dates') {
+      // Due Dates and Deadlines Schedule Report
+      const query = `
+        SELECT 
+          t.ticket_number as "Ticket No",
+          t.title as "Subject",
+          c.name as "Category",
+          t.priority as "Priority",
+          t.status as "Status",
+          COALESCE(tech.name, 'Unassigned') as "Assigned Specialist",
+          t.created_at as "Created Date",
+          t.due_at as "Resolution Deadline",
+          CASE 
+            WHEN t.status != 'Closed' AND datetime('now') > datetime(t.due_at) THEN 'OVERDUE'
+            WHEN t.status != 'Closed' THEN 'PENDING (On Schedule)'
+            ELSE 'RESOLVED'
+          END as "Deadline Status"
+        FROM tickets t
+        LEFT JOIN categories c ON t.category_id = c.id
+        LEFT JOIN technicians tech ON t.assigned_technician_id = tech.id
+        ${baseFilter}
+        ORDER BY t.due_at ASC
+      `;
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) return res.status(404).send('No data found for Due Dates Schedule report.');
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(r => Object.values(r).map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(','));
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `Due_Dates_Deadlines_Report_${Date.now()}.csv`;
+
+    } else {
+      // Summary / Custom Reports Default Query
+      let query = `
+        SELECT 
+          t.ticket_number as "Ticket No",
+          t.title as "Title",
+          c.name as "Category",
+          t.priority as "Priority",
+          t.status as "Status",
+          t.created_by_name as "Created By",
+          t.created_by_email as "Creator Email",
+          COALESCE(tech.name, 'Unassigned') as "Assigned Technician",
+          COALESCE(tech.email, '-') as "Technician Email",
+          t.created_at as "Created Date",
+          t.due_at as "SLA Due Date",
+          t.assigned_at as "Assigned Date",
+          t.closed_at as "Closed Date"
+        FROM tickets t
+        LEFT JOIN categories c ON t.category_id = c.id
+        LEFT JOIN technicians tech ON t.assigned_technician_id = tech.id
+        ${baseFilter}
+        ORDER BY t.id DESC
+      `;
+
+      const rows = db.prepare(query).all(...params);
+      if (rows.length === 0) {
+        return res.status(404).send('No tickets match the selected date range and filter criteria.');
+      }
+
+      const headers = Object.keys(rows[0]).join(',');
+      const csvRows = rows.map(row => {
+        return Object.values(row).map(val => `"${String(val || '').replace(/"/g, '""')}"`).join(',');
+      });
+
+      csvContent = '\uFEFF' + [headers, ...csvRows].join('\n');
+      filename = `Town_Planning_${reportType === 'custom_reports' ? 'Custom_Matrix' : 'Summary_Master'}_Report_${Date.now()}.csv`;
     }
 
-    // Convert JSON array to CSV format
-    const headers = Object.keys(tickets[0]).join(',');
-    const csvRows = tickets.map(row => {
-      return Object.values(row).map(val => `"${String(val || '').replace(/"/g, '""')}"`).join(',');
-    });
-
-    const csvContent = '\uFEFF' + [headers, ...csvRows].join('\n'); // Add UTF-8 BOM for Excel Hindi support
-
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="Town_Planning_Report_${Date.now()}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(csvContent);
   } catch (err) {
     res.status(500).json({ error: err.message });

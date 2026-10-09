@@ -1542,6 +1542,6 @@ setInterval(() => {
 }, 30000);
 
 // Start Server
-app.listen(PORT, () => {
-  console.log(`Town Planning Ticket Tool Server running at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Town Planning Ticket Tool Server running at http://localhost:${PORT} and on network interface`);
 });

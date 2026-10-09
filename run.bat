@@ -11,6 +11,14 @@ echo.
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
+:: Detect Local IPv4 Network Address
+set "LOCAL_IP=127.0.0.1"
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4"') do (
+    for /f "tokens=1 delims= " %%b in ("%%a") do (
+        if not "%%b"=="" set "LOCAL_IP=%%b"
+    )
+)
+
 :: Check if Node.js is installed
 where node >nul 2>nul
 if %ERRORLEVEL% neq 0 (
@@ -34,7 +42,7 @@ if not exist "%ROOT_DIR%backend\node_modules" (
     echo [OK] Backend dependencies installed.
     echo.
 ) else (
-    echo [1/4] Backend dependencies already installed.
+    echo [1/4] Backend dependencies ready.
 )
 
 :: Check and install Frontend dependencies if needed
@@ -50,16 +58,16 @@ if not exist "%ROOT_DIR%frontend\node_modules" (
     echo [OK] Frontend dependencies installed.
     echo.
 ) else (
-    echo [2/4] Frontend dependencies already installed.
+    echo [2/4] Frontend dependencies ready.
 )
 
 :: Start Backend server in separate window
 echo [3/4] Starting Backend server (Port 5000)...
 start "Town Planning - Backend Server (Port 5000)" cmd /k "cd /d "%ROOT_DIR%backend" && node server.js"
 
-:: Start Frontend dev server in separate window
+:: Start Frontend dev server with host enabled in separate window
 echo [4/4] Starting Frontend client (Port 3000)...
-start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev"
+start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" && npm run dev -- --host"
 
 :: Wait 3 seconds then open browser
 timeout /t 3 /nobreak >nul
@@ -72,8 +80,13 @@ echo ================================================================
 echo                 SYSTEM STARTED SUCCESSFULLY!
 echo ================================================================
 echo.
-echo  * Frontend:  http://localhost:3000
-echo  * Backend:   http://localhost:5000
+echo  [1] LOCAL ACCESS (This Computer):
+echo      - Frontend App:   http://localhost:3000
+echo      - Backend API:    http://localhost:5000
+echo.
+echo  [2] NETWORK / LAN ACCESS (Mobile, Tablets, Other PCs on Wi-Fi):
+echo      - Frontend App:   http://%LOCAL_IP%:3000
+echo      - Backend API:    http://%LOCAL_IP%:5000
 echo.
 echo  --- DEFAULT DEMO LOGINS ---
 echo  * Super Admin:    ishwarsahu1269@gmail.com   (Password: admin123)
@@ -82,8 +95,8 @@ echo  * Specialist:     osu.dtcp@gmail.com         (Password: Admin@123)
 echo  * Citizen User:   user@townplanning.gov.in   (Password: user123)
 echo.
 echo ================================================================
-echo  To shut down both servers, you can close their separate command
-echo  windows or press any key in this window to exit.
+echo  * Share http://%LOCAL_IP%:3000 with any device on your Wi-Fi!
+echo  * Run stop.bat to terminate both servers.
 echo ================================================================
 echo.
 pause

@@ -10,6 +10,15 @@ const { sendTicketCreatedEmail, sendTicketAssignedEmail, sendSLABreachWarningEma
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Prevent server process crashes from unhandled errors
+process.on('uncaughtException', (err) => {
+  console.error('[SERVER ERROR CAUGHT] Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[SERVER ERROR CAUGHT] Unhandled Promise Rejection:', reason);
+});
+
 // Middlewares
 app.use(cors());
 app.use(express.json());

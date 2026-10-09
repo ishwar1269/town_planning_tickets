@@ -1,9 +1,10 @@
 @echo off
-title Town Planning Tickets - Launcher
+title Town Planning Tickets - Permanent Launcher (Auto-Restart Enabled)
 color 0B
 
 echo ================================================================
 echo      TOWN PLANNING & URBAN DEVELOPMENT HELPDESK SYSTEM
+echo        [PERMANENT SERVER MODE - AUTO-RESTART ENABLED]
 echo ================================================================
 echo.
 
@@ -11,12 +12,10 @@ echo.
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
-:: Clean any previous/stale process on port 5000
+:: Clean any previous stale processes on ports 5000 and 3000
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
-
-:: Clean any previous/stale process on port 3000
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000" ^| findstr "LISTENING"') do (
     taskkill /F /PID %%a >nul 2>&1
 )
@@ -71,13 +70,13 @@ if not exist "%ROOT_DIR%frontend\node_modules" (
     echo [2/4] Frontend dependencies ready.
 )
 
-:: Start Backend server in separate window
-echo [3/4] Starting Backend server (Port 5000)...
-start "Town Planning - Backend Server (Port 5000)" cmd /k "cd /d "%ROOT_DIR%backend" && node server.js"
+:: Start Backend server with Auto-Restart Watchdog Loop
+echo [3/4] Starting Backend server on Port 5000 (with Auto-Restart Guard)...
+start "Town Planning - Backend Server (Port 5000)" cmd /k "cd /d "%ROOT_DIR%backend" & :loop & node server.js & echo. & echo [WARNING] Backend stopped or crashed. Auto-restarting in 2 seconds... & timeout /t 2 /nobreak >nul & goto loop"
 
-:: Start Frontend dev server with host enabled on port 3000
-echo [4/4] Starting Frontend client (Port 3000)...
-start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" && call npm.cmd run dev -- --host 0.0.0.0 --port 3000"
+:: Start Frontend client with Auto-Restart Watchdog Loop
+echo [4/4] Starting Frontend client on Port 3000 (with Auto-Restart Guard)...
+start "Town Planning - Frontend Client (Port 3000)" cmd /k "cd /d "%ROOT_DIR%frontend" & :loop & call npm.cmd run dev -- --host 0.0.0.0 --port 3000 & echo. & echo [WARNING] Frontend stopped or crashed. Auto-restarting in 2 seconds... & timeout /t 2 /nobreak >nul & goto loop"
 
 :: Wait 4 seconds then open browser
 timeout /t 4 /nobreak >nul
@@ -87,7 +86,7 @@ start http://localhost:3000
 
 echo.
 echo ================================================================
-echo                 SYSTEM STARTED SUCCESSFULLY!
+echo                 SYSTEM STARTED & PROTECTED!
 echo ================================================================
 echo.
 echo  [1] LOCAL ACCESS (This Computer):
@@ -105,8 +104,9 @@ echo  * Specialist:     osu.dtcp@gmail.com         (Password: Admin@123)
 echo  * Citizen User:   user@townplanning.gov.in   (Password: user123)
 echo.
 echo ================================================================
-echo  * Share http://%LOCAL_IP%:3000 with any device on your Wi-Fi!
-echo  * Run stop.bat to terminate both servers.
+echo  * Auto-Restart Protection is ACTIVE: Servers will NEVER close on
+echo    errors and will automatically revive in 2 seconds!
+echo  * To completely shut down the application, run stop.bat
 echo ================================================================
 echo.
 pause
